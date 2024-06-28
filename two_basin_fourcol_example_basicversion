@@ -1,0 +1,158 @@
+from pymoc.modules import Psi_Thermwind, Psi_SO, Column
+from pymoc.plotting import Interpolate_channel, Interpolate_twocol
+import numpy as np
+from matplotlib import pyplot as plt
+
+diag_file=None
+
+# boundary conditions:
+bs=0.02;
+# the minimum surface buoyancy in the GCM in the North Atlantic is 3.5890e-04 (or 0.1795C)
+bs_NA=0.00036; bAABW=-0.0011;  bs_NP = 0.02; bbot=min(bAABW,bs_NA,bs_NP) 
+#add another buoyancy condition for the fourth column
+
+
+
+# S.O. surface boundary conditions and grid: 
+y=np.asarray(np.linspace(0,3.e6, 51))
+tau=0.16 #surface wind stress
+offset=0.0345*(1-np.cos(np.pi*(5.55e5-1.e5)/8e6));
+bs_SO=(0.0345*(1-np.cos(np.pi*(y-1.e5)/8e6))*(y>5.55e5)
+      +(bAABW-offset)/5.55e5*np.maximum(0,5.55e5-y)+offset*(y<5.55e5));
+
+# time-stepping parameters:
+dt=86400.*30.                               # time-step for vert. adv. diff. calc.
+MOC_up_iters=int(np.floor(2.*360*86400/dt)) # multiplier for MOC time-step (MOC is updated every MOC_up_iters time steps)
+plot_iters= int(np.ceil(500*360*86400/dt))  # plotting frequency (in iterations)
+total_iters=int(np.ceil(4000*360*86400/dt))# total number of timesteps
+
+# Effective diffusivity profile
+def kappaeff(z): # effective diffusivity profile with tapering in BBL
+        return 1.0*( 1e-4*(1.1-np.tanh(np.maximum(z+2000.,0)/1000. + np.minimum(z+2000.,0)/1300.))
+                *(1.-np.maximum(-4000.-z+600.,0.)/600.)**2 ) 
+
+A_Atl=7e13 
+A_NA=5.5e12
+A_Pac = 1.7e14 #realistic areas
+A_NP = 1.34e13
+
+
+
+Lx = 1.3e+07  #(length of the channel) 
+Latl=6./21.*Lx;
+Lpac=15./21.*Lx; 
+K = 1800. # eddy diffusivity coefficient
+N2min=2e-7 #Minimum stratification for convective adjustment. 
+# create vertical grid:
+z=np.asarray(np.linspace(-4000, 0, 80)) 
+
+
+
+# create initial guess for buoyancy profile in the Atl and Pac
+def b_Atl(z): return bs*np.exp(z/300.)+z/z[0]*bbot
+#def b_Atl(z): return 0.3*bs+z/z[0]*(bbot-0.3*bs)
+def b_Pac(z): return bs*np.exp(z/300.)+z/z[0]*bbot
+
+# create N.A. overturning model instance
+AMOC = Psi_Thermwind(z=z,b1=b_Atl,b2=0.01*b_Atl(z))
+# and solve for initial overturning streamfunction:
+AMOC.solve()
+# map North Atlantic overturning to isopycnal space:
+
+#IMPORTANT: changed psi_iso_N to psi_iso_NA
+[Psi_iso_Atl,Psi_iso_NA]=AMOC.Psibz()
+
+#create N.P overturning model instance
+PMOC = Psi_Thermwind(z=z,b1=b_Pac,b2=0.01*b_Pac(z))
+# and solve for initial overturning streamfunction:
+PMOC.solve()
+
+[Psi_iso_Pac,Psi_iso_NP]=PMOC.Psibz()
+
+# create interbasin zonal overturning model instance
+ZOC = Psi_Thermwind(z=z,b1=b_Atl,b2=b_Pac, f=1e-4)
+# and solve for initial overturning streamfunction:
+ZOC.solve()
+# map inter-basin overturning to isopycnal space:
+[Psi_zonal_Atl,Psi_zonal_Pac]=ZOC.Psibz()
+
+# create S.O. overturning model instance for Atlantic sector
+SO_Atl=Psi_SO(z=z,y=y,b=b_Atl(z),bs=bs_SO,tau=tau,L=Latl,KGM=K)
+SO_Atl.solve()
+
+# create S.O. overturning model instance for Pacific sector
+SO_Pac=Psi_SO(z=z,y=y,b=b_Pac(z),bs=bs_SO,tau=tau,L=Lpac,KGM=K)
+SO_Pac.solve()
+
+Atl= Column(z=z,kappa=kappaeff,b=b_Atl,bs=bs,bbot=bbot,Area=A_Atl,N2min=N2min)
+# create adv-diff column model instance for northern sinking region Atlantic
+NA = Column(z=z,kappa=kappaeff,b=b_Atl,bs=bs_NA,bbot=bbot,Area=A_NA,N2min=N2min)
+# create adv-diff column model instance for Pac
+Pac= Column(z=z,kappa=kappaeff,b=b_Pac,bs=bs,bbot=bbot,Area=A_Pac,N2min=N2min)
+#create adv-diff column model instance for northern sinking region Pacific
+NP = Column(z=z,kappa=kappaeff,b=b_Pac,bs=bs_NP,bbot=bbot,Area=A_NP,N2min=N2min)
+
+
+
+fig = plt.figure(figsize=(6,9))
+ax1 = fig.add_subplot(111)
+ax2 = ax1.twiny()
+plt.ylim((-4e3,0))
+ax1.set_xlim((-20,30))
+ax2.set_xlim((-0.02,0.030))
+
+# loop to iteratively find equilibrium solution
+for ii in range(0, total_iters):    # update buoyancy profile # using isopycnal overturning:
+    wA_Atl=(Psi_iso_Atl+Psi_zonal_Atl-SO_Atl.Psi)*1e6 
+    wNA= -Psi_iso_NA*1e6
+    wA_Pac=(Psi_iso_Pac-Psi_zonal_Pac-SO_Pac.Psi)*1e6 # Area integrated velocity profile for the timestepping solution
+    wNP = -Psi_iso_NP*1e6  #is psi_iso_pac positive or negative
+    Atl.timestep(wA=wA_Atl,dt=dt)
+    NA.timestep(wA=wNA,dt=dt,do_conv=True) 
+    Pac.timestep(wA=wA_Pac,dt=dt)
+    NP.timestep(wA=wNP,dt=dt,do_conv=True)
+    
+    if ii%MOC_up_iters==0:  # update overturning streamfunction (can be done less frequently)
+        AMOC.update(b1=Atl.b,b2=NA.b)
+        AMOC.solve()
+        [Psi_iso_Atl, Psi_iso_NA]=AMOC.Psibz()
+        PMOC.update(b1=Pac.b,b2=NP.b)
+        PMOC.solve()
+        [Psi_iso_Pac, Psi_iso_NP]=PMOC.Psibz()
+        ZOC.update(b1=Atl.b,b2=Pac.b)
+        ZOC.solve()
+        [Psi_zonal_Atl,Psi_zonal_Pac]=ZOC.Psibz()
+        SO_Atl.update(b=Atl.b)
+        SO_Atl.solve()
+        SO_Pac.update(b=Pac.b)
+        SO_Pac.solve() #modify for north pacific too
+    
+    if ii%plot_iters==0:  # Plot current state:
+        ax1.plot(AMOC.Psi, AMOC.z,'--r', label="AMOC", linewidth=0.5)
+        ax1.plot(PMOC.Psi, PMOC.z,'--m',label="PMOC", linewidth=0.5) #added the PMOC
+        ax1.plot(ZOC.Psi, ZOC.z, 'tab:orange',label="Zonal", linewidth=0.5)
+        ax1.plot(SO_Atl.Psi-ZOC.Psi, SO_Atl.z, '--b', label="South Atl & Zonal", linewidth=0.5)
+        ax1.plot(SO_Pac.Psi+ZOC.Psi, SO_Pac.z, '--g', label="South Pac & Zonal", linewidth=0.5)
+        ax1.plot(SO_Atl.Psi+SO_Pac.Psi, z, '--c',label="South Atl & Pac", linewidth=0.5)
+        ax1.legend(loc='center right')
+        ax2.plot(Atl.b, Atl.z, '-b', label="Atl", linewidth=0.5)
+        ax2.plot(Pac.b, Pac.z, '-g', label="Pac", linewidth=0.5)
+        ax2.plot(NA.b, NA.z, 'maroon', label="North Atl",linewidth=0.5) 
+        ax2.plot(NP.b, NP.z, '-m', label="North Pac", linewidth=0.5) #added the NP
+        ax2.legend(loc='lower right')
+        plt.pause(0.01)
+        print("t=",round(ii*dt/86400/360),"years")
+
+ax1.plot(AMOC.Psi, AMOC.z,'--r', label="AMOC", linewidth=1.5)
+ax1.plot(PMOC.Psi, PMOC.z,'--m', label="PMOC", linewidth=0.5) #added the PMOC
+ax1.plot(ZOC.Psi, ZOC.z, 'tab:orange', label="Zonal", linewidth=1.5)
+ax1.plot(SO_Atl.Psi-ZOC.Psi, SO_Atl.z, '--b', label="South Atl & Zonal", linewidth=1.5)
+ax1.plot(SO_Pac.Psi+ZOC.Psi, SO_Pac.z, '--g', label="South Pac & Zonal", linewidth=1.5)
+ax1.plot(SO_Atl.Psi+SO_Pac.Psi, z, '--c', label="South Atl & Pac", linewidth=1.5)
+ax1.legend()
+
+ax2.plot(Atl.b, Atl.z, '-b', label="Atl", linewidth=1.5)
+ax2.plot(Pac.b, Pac.z, '-g', label="Pac", linewidth=1.5)
+ax2.plot(NA.b, NA.z, '-r', label="North Atl", linewidth=0.5) 
+ax2.plot(NP.b, NP.z, 'm', label="North Pac", linewidth=0.5) #added the NP
+ax2.legend()
