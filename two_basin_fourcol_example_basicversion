@@ -101,6 +101,8 @@ plt.ylim((-4e3,0))
 ax1.set_xlim((-20,30))
 ax2.set_xlim((-0.02,0.030))
 
+diag_file = 'twobasin_diags_bs_',str(bs_NP)
+
 # loop to iteratively find equilibrium solution
 for ii in range(0, total_iters):    # update buoyancy profile # using isopycnal overturning:
     wA_Atl=(Psi_iso_Atl+Psi_zonal_Atl-SO_Atl.Psi)*1e6 
@@ -156,3 +158,329 @@ ax2.plot(Pac.b, Pac.z, '-g', label="Pac", linewidth=1.5)
 ax2.plot(NA.b, NA.z, '-r', label="North Atl", linewidth=0.5) 
 ax2.plot(NP.b, NP.z, 'm', label="North Pac", linewidth=0.5) #added the NP
 ax2.legend()
+
+np.savez(diag_file, b_Atl=Atl.b, b_Pac=Pac.b, b_NA = NA.b, b_NP = NP.b,
+            Psi_SO_Atl=SO_Atl.Psi, Psi_SO_Pac=SO_Pac.Psi,
+            Psi_ZOC=ZOC.Psi, Psib_ZOC=ZOC.Psib(), bgrid_ZOC=ZOC.bgrid,
+            Psi_AMOC=AMOC.Psi, Psib_AMOC=AMOC.Psib(), bgrid_AMOC=AMOC.bgrid, Psi_PMOC = PMOC.Psi, Psib_PMOC = PMOC.Psib(), bgrid_PMOC = PMOC.bgrid)
+
+diag_load = np.load('twobasin_diags_bs_0.02.npz') #this changes depending on the bs_NP value. In this case, bs_NP= 0.02
+b_NA = diag_load['b_NA']
+b_NP = diag_load['b_NP']
+b_Atl = diag_load['b_Atl']
+b_Pac = diag_load['b_Pac']
+Psi_SO_Atl = diag_load['Psi_SO_Atl']
+Psi_SO_Pac = diag_load['Psi_SO_Pac']
+Psi_ZOC = diag_load['Psi_ZOC']
+Psib_ZOC = diag_load['Psib_ZOC']
+bgrid_ZOC = diag_load['bgrid_ZOC']
+Psi_AMOC = diag_load['Psi_AMOC']
+Psib_AMOC = diag_load['Psib_AMOC']
+bgrid_AMOC = diag_load['bgrid_AMOC']
+Psi_PMOC = diag_load['Psi_PMOC']
+Psib_PMOC = diag_load['Psib_PMOC']
+bgrid_PMOC = diag_load['bgrid_PMOC']
+
+blevs=np.array([-0.004,-0.002,0.0,0.004,0.01,0.018])
+plevs=np.arange(-21.,24.,2.0)
+nba = 500;
+nbp = 500;
+b_basin=(A_Atl*Atl.b+A_Pac*Pac.b)/(A_Atl+A_Pac);
+
+
+
+# Compute total SO residual overturning by first interpolating circulation 
+# in both sectors to mean buoyancy profile values and then summing (at conbnstant b).
+PsiSO=(np.interp(b_basin,Atl.b,SO_Atl.Psi)
+      +np.interp(b_basin,Pac.b,SO_Pac.Psi));
+AMOC_bbasin=np.interp(b_basin,AMOC.bgrid,AMOC.Psib(nb=nba));
+
+PMOC_bbasin=np.interp(b_basin,PMOC.bgrid,PMOC.Psib(nb=nbp));
+# this is to Plot adiabatic overturning only:
+PsiSO_bgrid=(np.interp(AMOC.bgrid,Atl.b,SO_Atl.Psi)
+            +np.interp(PMOC.bgrid,Pac.b,SO_Pac.Psi)); #does this change?
+
+l=y[-1];
+
+
+bs=1.*bs_SO;bnp=1.*b_basin;
+bs[-1]=1.*bnp[-1];
+
+bs=1.*bs_SO;bna=1.*b_basin;
+bs[-1]=1.*bna[-1];
+
+
+
+
+
+# first interpolate buoyancy in channel along constant-slope isopycnals: 
+bint_na=Interpolate_channel(y=y,z=z,bs=bs,bn=bna) #assumed this had to be replicated because there needs to be bna and bnp
+bsouth_na=bint_na.gridit()
+
+bint_np=Interpolate_channel(y=y,z=z,bs=bs,bn=bnp)
+bsouth_np=bint_np.gridit()
+
+# buoyancy in the basin is all the same:
+lbasin=11000.
+ltrans=1500.
+lnorth=400.
+lchannel=l/1e3
+ybasin=np.linspace(0,lbasin,60)+lchannel;
+bbasin=np.tile(b_basin,(len(ybasin),1))
+bAtl=np.tile(Atl.b,(len(ybasin),1))
+bPac=np.tile(Pac.b,(len(ybasin),1))
+# interpolate buoyancy in northern ransition region:
+ytrans=np.linspace(ltrans/20.,ltrans,20)+lchannel+lbasin;
+
+bna=b_NA.copy();
+bnp=b_NP.copy();
+
+
+bnp[0]=b_basin[0];
+bna[0]=b_basin[0];
+
+# Notice that the interpolation procedure assumes that the bottom
+#buoyancies in both colums match - which may not be exactly the case depending
+# on when in the time-step data is saved 
+
+
+bint_na=Interpolate_twocol(y=ytrans*1000.-ytrans[0]*1000.,z=z,bs=Atl.b,bn=bna)
+btrans_na=bint_na.gridit()
+
+bint_np=Interpolate_twocol(y=ytrans*1000.-ytrans[0]*1000.,z=z,bs=Pac.b,bn=bnp)
+btrans_np=bint_np.gridit()
+
+
+
+# finally set buyancy in northern deep water formation region:
+ynorth=np.linspace(lnorth/20.,lnorth,20)+lchannel+lbasin+ltrans;
+bnorth_na=np.tile(bna,(len(ynorth),1))
+bnorth_np=np.tile(bnp,(len(ynorth),1))
+# now stick it all together:
+ynew=np.concatenate((y/1e3,ybasin,ytrans,ynorth))
+
+
+
+bnew_na=np.concatenate((bsouth_na,bbasin,btrans_na,bnorth_na))
+bnew_np=np.concatenate((bsouth_np,bbasin,btrans_np,bnorth_np))
+
+bnew_Atl=np.concatenate((bsouth_na,bAtl,btrans_na,bnorth_na))
+bnew_Pac=np.concatenate((bsouth_np,bPac,btrans_np,bnorth_np))
+
+
+
+# Compute z-coordinate and residual overturning streamfunction at all latitudes:
+psiarray_b_na=np.zeros((len(ynew),len(z))) # overturning in b-coordinates
+psiarray_b_np=np.zeros((len(ynew),len(z))) 
+psiarray_b=np.zeros((len(ynew),len(z)))
+
+psiarray_b_Atl=np.zeros((len(ynew),len(z))) # overturning in b-coordinates
+psiarray_b_Pac=np.zeros((len(ynew),len(z))) # overturning in b-coordinates
+
+psiarray_z=np.zeros((len(ynew),len(z)))
+psiarray_z_na=np.zeros((len(ynew),len(z)))
+psiarray_z_np=np.zeros((len(ynew),len(z)))
+
+psiarray_z_Atl=np.zeros((len(ynew),len(z)))  # z-space, "eulerian" overturning
+psiarray_z_Pac=np.zeros((len(ynew),len(z)))  # z-space, "eulerian" overturning
+
+
+for iy in range(1,len(y)):
+    # in the channel, interpolate PsiSO onto local isopycnal depth:
+    psiarray_z_na[iy,:]=np.interp(bnew_na[iy,:],b_basin,SO_Atl.Psi+SO_Pac.Psi)
+    psiarray_z_np[iy,:]=np.interp(bnew_np[iy,:],b_basin,SO_Atl.Psi+SO_Pac.Psi)
+    
+    psiarray_z_Atl[iy,:]=psiarray_z_na[iy,:]
+    psiarray_z_Pac[iy,:]=psiarray_z_np[iy,:]
+    psiarray_z[iy,:]=np.interp((bnew_na)[iy,:],b_basin,SO_Atl.Psi+SO_Pac.Psi) #not sure if this is bnew_na or bnew_na + bnew_np
+    
+    psiarray_b[iy,b_basin<bs_SO[iy]]=PsiSO[b_basin<bs_SO[iy]] 
+    psiarray_b_Atl[iy,:]=psiarray_b[iy,:];   
+    psiarray_b_Pac[iy,:]=psiarray_b[iy,:];    
+     
+    
+for iy in range(len(y),len(y)+len(ybasin)):
+    # in the basin, linearly interpolate between Psi_SO and Psi_AMOC:
+
+    psiarray_z[iy,:]=((ynew[iy]-lchannel)*(AMOC.Psi)+(lchannel+lbasin-ynew[iy])*(SO_Atl.Psi+SO_Pac.Psi))/lbasin 
+    
+    psiarray_z_Atl[iy,:]=((ynew[iy]-lchannel)*AMOC.Psi+(lchannel+lbasin-ynew[iy])*(SO_Atl.Psi-ZOC.Psi))/lbasin  
+    psiarray_z_Pac[iy,:]= ((ynew[iy]-lchannel)*PMOC.Psi+(lchannel+lbasin-ynew[iy])*(SO_Pac.Psi+ZOC.Psi))/lbasin  #changed the sign
+    
+    psiarray_b[iy,:]=((ynew[iy]-lchannel)*(AMOC_bbasin + PMOC_bbasin)
+                      +(lchannel+lbasin-ynew[iy])*PsiSO)/lbasin    
+    
+    psiarray_b_Atl[iy,:]=((ynew[iy]-lchannel)*AMOC_bbasin+
+                    (lchannel+lbasin-ynew[iy])*(np.interp(b_basin,Atl.b,SO_Atl.Psi)
+                      -np.interp(b_basin,ZOC.bgrid,ZOC.Psib())))/lbasin                                                                                      
+    psiarray_b_Pac[iy,:]= ((ynew[iy]-lchannel)*PMOC_bbasin+
+                    (lchannel+lbasin-ynew[iy])*(np.interp(b_basin,Pac.b,SO_Pac.Psi)
+                      +np.interp(b_basin,ZOC.bgrid,ZOC.Psib())))/lbasin   
+    
+for iy in range(len(y)+len(ybasin),len(y)+len(ybasin)+len(ytrans)):
+    # in the northern transition region keep psi_z constant 
+    # and psi_b constant on non-outcropped isopycnals (but zero on outcropped isopycnals)
+    psiarray_z[iy,:]= AMOC.Psi # + PMOC.Psi
+    psiarray_z_Atl[iy,:]=AMOC.Psi      
+    psiarray_z_Pac[iy,:]=PMOC.Psi   
+   
+    psiarray_b_na[iy,b_basin<bnew_na[iy,-1]]=AMOC_bbasin[b_basin<bnew_na[iy,-1]]   
+    psiarray_b_np[iy,b_basin<bnew_np[iy,-1]]=PMOC_bbasin[b_basin<bnew_np[iy,-1]]
+    psiarray_b[iy,b_basin<(bnew_na+bnew_np)[iy,-1]]=(AMOC_bbasin+PMOC_bbasin)[b_basin<(bnew_na+bnew_np)[iy,-1]]  
+   
+    psiarray_b_Atl[iy,b_basin<bnew_na[iy,-1]]=psiarray_b_na[iy,b_basin<bnew_na[iy,-1]]
+    psiarray_b_Pac[iy,b_basin<bnew_np[iy,-1]]=psiarray_b_np[iy,b_basin<bnew_np[iy,-1]]
+   
+    
+for iy in range(len(y)+len(ybasin)+len(ytrans),len(ynew)):
+    # in the northern sinking region, all psi decrease linearly to zero:
+  
+    psiarray_z[iy,:]=((lchannel+lbasin+ltrans+lnorth-ynew[iy])*(AMOC.Psi))/lnorth
+    psiarray_z_Atl[iy,:]=((lchannel+lbasin+ltrans+lnorth-ynew[iy])*AMOC.Psi)/lnorth      
+    psiarray_z_Pac[iy,:]= ((lchannel+lbasin+ltrans+lnorth-ynew[iy])*PMOC.Psi)/lnorth
+    
+    
+    
+    psiarray_b_na[iy,b_basin<bnew_na[iy,-1]]=((lchannel+lbasin+ltrans+lnorth-ynew[iy])*AMOC_bbasin[b_basin<bnew_na[iy,-1]])/lnorth  
+    psiarray_b_np[iy,b_basin<bnew_np[iy,-1]]=((lchannel+lbasin+ltrans+lnorth-ynew[iy])*PMOC_bbasin[b_basin<bnew_np[iy,-1]])/lnorth  
+    psiarray_b[iy,b_basin<(bnew_na+bnew_np)[iy,-1]]=((lchannel+lbasin+ltrans+lnorth-ynew[iy])
+        *(AMOC_bbasin+PMOC_bbasin)[b_basin<(bnew_na+bnew_np)[iy,-1]])/lnorth
+    
+
+
+    psiarray_b_Atl[iy,b_basin<bnew_na[iy,-1]]=psiarray_b_na[iy,b_basin<bnew_na[iy,-1]]
+    psiarray_b_Pac[iy,b_basin<bnew_np[iy,-1]]=psiarray_b_np[iy,b_basin<bnew_np[iy,-1]]
+
+#z coordinate overturning
+
+fig = plt.figure(figsize=(10.6,6.8))
+ax1 =fig.add_axes([0.1,.57,.33,.36])
+ax2 = ax1.twiny()
+plt.ylim((-4e3,0))
+ax1.set_ylabel('Depth [m]', fontsize=13)
+ax1.set_xlim((-20,30))
+ax2.set_xlim((-0.02,0.030))
+ax1.set_xlabel('$\Psi$ [SV]', fontsize=13)
+ax2.set_xlabel('$b_B$ [m s$^{-2}$]', fontsize=13)
+ax1.plot(AMOC.Psi, AMOC.z,'--r', label = "AMOC", linewidth=1.5)
+ax1.plot(PMOC.Psi, PMOC.z,'--m', label = "PMOC", linewidth=1.5) #match colors to earlier plot
+ax1.plot(ZOC.Psi, ZOC.z, 'tab:orange', label = "Zonal", linewidth=1.5)
+ax1.plot(SO_Atl.Psi-ZOC.Psi, SO_Atl.z, '--b', label = "South Atl & Zonal", linewidth=1.5)
+ax1.plot(SO_Pac.Psi+ZOC.Psi, SO_Pac.z, '--g', label = "South Pac & Zonal", linewidth=1.5)
+ax1.plot(SO_Atl.Psi+SO_Pac.Psi, z, '--c', label = "South Atl & Pac", linewidth=1.5)
+ax2.plot(Atl.b, Atl.z, '-b', label = "Atl", linewidth=1.5)
+ax2.plot(Pac.b, Pac.z, '-g', label = "Pac", linewidth=1.5)
+ax2.plot(NA.b, NA.z, 'maroon', label = "North Atl",linewidth=1.5) 
+ax2.plot(NP.b, NP.z, '-m',label = "North Pac",linewidth=1.5)   
+h1, l1 = ax1.get_legend_handles_labels()
+h2, l2 = ax2.get_legend_handles_labels()
+ax1.plot(0.*z, z,linewidth=0.5,color='k',linestyle=':',label ="z coord")
+#ax1.legend(h1+h2, l1+l2, loc='center right', frameon=False)
+
+
+ax1 = fig.add_subplot(222)
+CS=ax1.contour(ynew,z,bnew_na.transpose()/2e-3,levels=blevs/2e-3,colors='k',linewidths=1.0,linestyles='solid')
+ax1.clabel(CS,fontsize=10,fmt='%1.0f')
+ax1.contour(ynew,z,psiarray_z.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(ynew,z,psiarray_z.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,ynew[-1]])
+ax1.set_xlabel('y [km]',fontsize=12)
+ax1.set_ylabel('Depth [m]',fontsize=12)
+ax1.set_title('Global',fontsize=12)
+       
+ax1 = fig.add_subplot(223)
+CS=ax1.contour(ynew,z,bnew_Pac.transpose()/2e-3,levels=blevs/2e-3,colors='k',linewidths=1.0,linestyles='solid')
+ax1.clabel(CS,fontsize=10,fmt='%1.0f')
+ax1.contour(ynew,z,psiarray_z_Pac.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(ynew,z,psiarray_z_Pac.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,ynew[-1]])
+ax1.set_xlabel('y [km]',fontsize=12)
+ax1.set_title('Pacific',fontsize=12)
+plt.gca().invert_xaxis()
+
+ax1 = fig.add_subplot(224)
+CS=ax1.contour(ynew,z,bnew_Atl.transpose()/2e-3,levels=blevs/2e-3,colors='k',linewidths=1.0,linestyles='solid')
+ax1.clabel(CS,fontsize=10,fmt='%1.0f')
+ax1.contour(ynew,z,psiarray_z_Atl.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(ynew,z,psiarray_z_Atl.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,ynew[-1]])
+ax1.set_xlabel('y [km]',fontsize=12)
+ax1.set_ylabel('Depth [m]',fontsize=12)
+ax1.set_title('Atlantic',fontsize=12)
+
+cbar_ax = fig.add_axes([0.94, 0.15, 0.015, 0.7])
+fig.tight_layout()   
+fig.subplots_adjust(right=0.92)
+fig.colorbar(CS, cax=cbar_ax,ticks=np.arange(-20,21,5), orientation='vertical')
+
+#isopycnal overturning
+
+fig = plt.figure(figsize=(10.8,6.8))
+ax1 =fig.add_axes([0.1,.57,.33,.36])
+ax2 = ax1.twiny()
+plt.ylim((-4e3,0))
+ax1.set_ylabel('b [m s$^{-2}$]', fontsize=13)
+ax1.set_xlim((-20,30))
+ax2.set_xlim((-0.02,0.030))
+ax1.set_xlabel('$\Psi$ [SV]', fontsize=13)
+ax2.set_xlabel('$b_B$ [m s$^{-2}$]', fontsize=13)
+ax1.plot(AMOC_bbasin, z,'--r', linewidth=1.5)
+ax1.plot(PMOC_bbasin, z,'--m', linewidth=1.5)
+ax1.plot(np.interp(b_basin,ZOC.bgrid,ZOC.Psib()), z, 'tab:orange', linewidth=1.5)
+ax1.plot(np.interp(b_basin,Atl.b,SO_Atl.Psi)
+        -np.interp(b_basin,ZOC.bgrid,ZOC.Psib()), z, '--b', linewidth=1.5)
+ax1.plot(np.interp(b_basin,Pac.b,SO_Pac.Psi)
+          +np.interp(b_basin,ZOC.bgrid,ZOC.Psib()), z, '--g', linewidth=1.5)
+ax1.plot(PsiSO, z, '--c', linewidth=1.5)
+ax2.plot(Atl.b, Atl.z, '-b', linewidth=1.5)
+ax2.plot(Pac.b, Pac.z, '-g', linewidth=1.5)
+ax2.plot(NA.b, NA.z, 'maroon', linewidth=1.5)    
+ax2.plot(NP.b, NP.z, '-m', linewidth=1.5)  
+h1, l1 = ax1.get_legend_handles_labels()
+h2, l2 = ax2.get_legend_handles_labels()
+ax1.legend(h1+h2, l1+l2, loc=4, frameon=False)
+ax1.plot(0.*b_basin, b_basin,linewidth=0.5,color='k',linestyle=':')
+ax1.set_yticks(np.interp([0.02, 0.005,0.002,0.001,0.0005, 0.,-0.0005, -0.001 ],b_basin,z))
+ax1.set_yticklabels([0.02, 0.005,0.002, 0.001,0.0005, 0.,-0.0005, -0.001 ])
+
+ax1 = fig.add_subplot(222)
+ax1.contour(ynew,z,psiarray_b.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(ynew,z,psiarray_b.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,ynew[-1]])
+ax1.set_xlabel('y [km]',fontsize=12)
+ax1.set_ylabel('b [m s$^{-2}$]',fontsize=12)
+ax1.set_title('Global',fontsize=12)
+ax1.set_yticks(np.interp([0.02, 0.005,0.002,0.001,0.0005, 0.,-0.0005, -0.001 ],b_basin,z))
+ax1.set_yticklabels([0.02, 0.005,0.002, 0.001,0.0005, 0.,-0.0005, -0.001 ])
+       
+ax1 = fig.add_subplot(223)
+ax1.contour(ynew,z,psiarray_b_Pac.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(ynew,z,psiarray_b_Pac.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.plot(np.array([y[-1]/1000.,y[-1]/1000.]),np.array([-4000.,0.]),color='k')
+ax1.set_xlim([0,ynew[-1]])
+ax1.set_xlabel('y [km]',fontsize=12)
+ax1.set_ylabel('b [m s$^{-2}$]',fontsize=12)
+ax1.set_title('Pacific',fontsize=12)
+ax1.set_yticks(np.interp([0.02, 0.005,0.002,0.001,0.0005, 0.,-0.0005, -0.001 ],b_basin,z))
+ax1.set_yticklabels([0.02, 0.005,0.002, 0.001,0.0005, 0.,-0.0005, -0.001 ])
+plt.gca().invert_xaxis()
+
+ax1 = fig.add_subplot(224)
+ax1.contour(ynew,z,psiarray_b_Atl.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(ynew,z,psiarray_b_Atl.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.plot(np.array([y[-1]/1000.,y[-1]/1000.]),np.array([-4000.,0.]),color='k')
+ax1.set_xlim([0,ynew[-1]])
+ax1.set_xlabel('y [km]',fontsize=12)
+ax1.set_ylabel('b [m s$^{-2}$]',fontsize=12)
+ax1.set_title('Atlantic',fontsize=12)
+ax1.set_yticks(np.interp([0.02, 0.005,0.002,0.001,0.0005, 0.,-0.0005, -0.001 ],b_basin,z))
+ax1.set_yticklabels([0.02, 0.005,0.002, 0.001,0.0005, 0.,-0.0005, -0.001 ])
+
+cbar_ax = fig.add_axes([0.94, 0.15, 0.015, 0.7])
+fig.tight_layout()   
+fig.subplots_adjust(right=0.92)
+fig.colorbar(CS, cax=cbar_ax,ticks=np.arange(-20,21,5), orientation='vertical')
+
+
+
+
