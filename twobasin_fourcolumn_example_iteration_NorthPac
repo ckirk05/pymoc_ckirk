@@ -3,15 +3,11 @@ from pymoc.plotting import Interpolate_channel, Interpolate_twocol
 import numpy as np
 from matplotlib import pyplot as plt
 
-diag_file=None
-
 # boundary conditions:
 bs=0.02;
 # the minimum surface buoyancy in the GCM in the North Atlantic is 3.5890e-04 (or 0.1795C)
 bs_NA=0.00036; bAABW=-0.0011;  bs_NP = 0.02; bbot=min(bAABW,bs_NA,bs_NP) 
 #add another buoyancy condition for the fourth column
-
-
 
 # S.O. surface boundary conditions and grid: 
 y=np.asarray(np.linspace(0,3.e6, 51))
