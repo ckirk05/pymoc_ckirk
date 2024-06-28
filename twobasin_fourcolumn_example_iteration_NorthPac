@@ -1,0 +1,334 @@
+from pymoc.modules import Psi_Thermwind, Psi_SO, Column
+from pymoc.plotting import Interpolate_channel, Interpolate_twocol
+import numpy as np
+from matplotlib import pyplot as plt
+
+diag_file=None
+
+# boundary conditions:
+bs=0.02;
+# the minimum surface buoyancy in the GCM in the North Atlantic is 3.5890e-04 (or 0.1795C)
+bs_NA=0.00036; bAABW=-0.0011;  bs_NP = 0.02; bbot=min(bAABW,bs_NA,bs_NP) 
+#add another buoyancy condition for the fourth column
+
+
+
+# S.O. surface boundary conditions and grid: 
+y=np.asarray(np.linspace(0,3.e6, 51))
+tau=0.16 #surface wind stress
+offset=0.0345*(1-np.cos(np.pi*(5.55e5-1.e5)/8e6));
+bs_SO=(0.0345*(1-np.cos(np.pi*(y-1.e5)/8e6))*(y>5.55e5)
+      +(bAABW-offset)/5.55e5*np.maximum(0,5.55e5-y)+offset*(y<5.55e5));
+
+# time-stepping parameters:
+dt=86400.*30.                               # time-step for vert. adv. diff. calc.
+MOC_up_iters=int(np.floor(2.*360*86400/dt)) # multiplier for MOC time-step (MOC is updated every MOC_up_iters time steps)
+plot_iters= int(np.ceil(500*360*86400/dt))  # plotting frequency (in iterations)
+total_iters=int(np.ceil(4000*360*86400/dt))# total number of timesteps
+
+# Effective diffusivity profile
+def kappaeff(z): # effective diffusivity profile with tapering in BBL
+        return 1.0*( 1e-4*(1.1-np.tanh(np.maximum(z+2000.,0)/1000. + np.minimum(z+2000.,0)/1300.))
+                *(1.-np.maximum(-4000.-z+600.,0.)/600.)**2 ) 
+A_Atl=7e13#6e13  
+A_NA=5.5e12
+A_Pac = 1.7e14 #realistic areas
+A_NP = 1.34e13
+
+
+Lx = 1.3e+07  #(length of the channel) 
+Latl=6./21.*Lx;
+Lpac=15./21.*Lx; 
+K = 1800. # eddy diffusivity coefficient
+N2min=2e-7 #Minimum stratification for convective adjustment. 
+# create vertical grid:
+z=np.asarray(np.linspace(-4000, 0, 80)) 
+
+# create initial guess for buoyancy profile in the Atl
+def b_Atl(z): return bs*np.exp(z/300.)+z/z[0]*bbot
+#def b_Atl(z): return 0.3*bs+z/z[0]*(bbot-0.3*bs)
+def b_Pac(z): return bs*np.exp(z/300.)+z/z[0]*bbot
+
+AMOC = Psi_Thermwind(z=z,b1=b_Atl,b2=0.01*b_Atl(z))
+# and solve for initial overturning streamfunction:
+AMOC.solve()
+# map North Atlantic overturning to isopycnal space:
+
+#IMPORTANT: changed psi_iso_N to psi_iso_NA
+[Psi_iso_Atl,Psi_iso_NA]=AMOC.Psibz()
+
+#create N.P overturning model instance
+PMOC = Psi_Thermwind(z=z,b1=b_Pac,b2=0.01*b_Pac(z))
+# and solve for initial overturning streamfunction:
+PMOC.solve()
+
+[Psi_iso_Pac,Psi_iso_NP]=PMOC.Psibz()
+
+# create interbasin zonal overturning model instance
+ZOC = Psi_Thermwind(z=z,b1=b_Atl,b2=b_Pac, f=1e-4)
+# and solve for initial overturning streamfunction:
+ZOC.solve()
+# map inter-basin overturning to isopycnal space:
+[Psi_zonal_Atl,Psi_zonal_Pac]=ZOC.Psibz()
+
+# create S.O. overturning model instance for Atlantic sector
+SO_Atl=Psi_SO(z=z,y=y,b=b_Atl(z),bs=bs_SO,tau=tau,L=Latl,KGM=K)
+SO_Atl.solve()
+
+# create S.O. overturning model instance for Pacific sector
+SO_Pac=Psi_SO(z=z,y=y,b=b_Pac(z),bs=bs_SO,tau=tau,L=Lpac,KGM=K)
+SO_Pac.solve()
+
+Atl= Column(z=z,kappa=kappaeff,b=b_Atl,bs=bs,bbot=bbot,Area=A_Atl,N2min=N2min)
+# create adv-diff column model instance for northern sinking region Atlantic
+NA = Column(z=z,kappa=kappaeff,b=b_Atl,bs=bs_NA,bbot=bbot,Area=A_NA,N2min=N2min)
+    # create adv-diff column model instance for Pac
+Pac= Column(z=z,kappa=kappaeff,b=b_Pac,bs=bs,bbot=bbot,Area=A_Pac,N2min=N2min)
+
+
+NP = Column(z=z,kappa=kappaeff,b=b_Pac,bs=bs_NP,bbot=bbot,Area=A_NP,N2min=N2min)
+
+
+fig = plt.figure(figsize=(6,9))
+ax1 = fig.add_subplot(111)
+ax2 = ax1.twiny()
+plt.ylim((-4e3,0))
+ax1.set_xlim((-20,30))
+ax2.set_xlim((-0.02,0.030))
+
+bs_NP = np.linspace(0.00036,0.02,30)
+
+for i in range(len(bs_NP)):
+    NP = Column(z=z,kappa=kappaeff,b=b_Pac,bs=bs_NP[i],bbot=bbot,Area=A_NP,N2min=N2min)
+    diag_file='twobasin_diags_bs_'+str(bs_NP[i])
+    
+    for ii in range(0, total_iters):    # update buoyancy profile # using isopycnal overturning:
+        wA_Atl=(Psi_iso_Atl+Psi_zonal_Atl-SO_Atl.Psi)*1e6 
+        wNA= -Psi_iso_NA*1e6
+        wA_Pac=(Psi_iso_Pac-Psi_zonal_Pac-SO_Pac.Psi)*1e6 # Area integrated velocity profile for the timestepping solution
+        wNP = -Psi_iso_NP*1e6  #is psi_iso_pac positive or negative
+        Atl.timestep(wA=wA_Atl,dt=dt)
+        NA.timestep(wA=wNA,dt=dt,do_conv=True) 
+        Pac.timestep(wA=wA_Pac,dt=dt)
+        NP.timestep(wA=wNP,dt=dt,do_conv=True)
+    
+        if ii%MOC_up_iters==0:  # update overturning streamfunction (can be done less frequently)
+            AMOC.update(b1=Atl.b,b2=NA.b)
+            AMOC.solve()
+            [Psi_iso_Atl, Psi_iso_NA]=AMOC.Psibz()
+            PMOC.update(b1=Pac.b,b2=NP.b)
+            PMOC.solve()
+            [Psi_iso_Pac, Psi_iso_NP]=PMOC.Psibz()
+            ZOC.update(b1=Atl.b,b2=Pac.b)
+            ZOC.solve()
+            [Psi_zonal_Atl,Psi_zonal_Pac]=ZOC.Psibz()
+            SO_Atl.update(b=Atl.b)
+            SO_Atl.solve()
+            SO_Pac.update(b=Pac.b)
+            SO_Pac.solve() #modify for north pacific too
+    
+   
+    np.savez(diag_file, b_Atl=Atl.b, b_Pac=Pac.b, b_NA=NA.b, b_NP = NP.b,
+            Psi_SO_Atl=SO_Atl.Psi, Psi_SO_Pac=SO_Pac.Psi,
+            Psi_ZOC=ZOC.Psi, Psib_ZOC=ZOC.Psib(), bgrid_ZOC=ZOC.bgrid,
+            Psi_AMOC=AMOC.Psi, Psib_AMOC=AMOC.Psib(), bgrid_AMOC=AMOC.bgrid, Psi_PMOC = PMOC.Psi, Psib_PMOC = PMOC.Psib(), bgrid_PMOC = PMOC.bgrid)
+    print(i) #optional, just to check that the loop works
+
+Diag = np.load('twobasin_diags_bs_0.00036.npz')
+a_0 = Diag['Psi_AMOC']
+p_0 = Diag['Psi_PMOC']
+
+
+Diag1= np.load('twobasin_diags_bs_0.0010372413793103448.npz')
+a_1 = Diag1['Psi_AMOC']
+p_1 = Diag1['Psi_PMOC']
+
+
+Diag2= np.load('twobasin_diags_bs_0.0017144827586206897.npz')
+a_2 = Diag2['Psi_AMOC']
+p_2 = Diag2['Psi_PMOC']
+
+Diag3= np.load('twobasin_diags_bs_0.0023917241379310347.npz')
+a_3 = Diag3['Psi_AMOC']
+p_3 = Diag3['Psi_PMOC']
+
+Diag4= np.load('twobasin_diags_bs_0.0030689655172413794.npz')
+a_4 = Diag4['Psi_AMOC']
+p_4 = Diag4['Psi_PMOC']
+
+Diag5= np.load('twobasin_diags_bs_0.0030689655172413794.npz')
+a_5 = Diag5['Psi_AMOC']
+p_5 = Diag5['Psi_PMOC']
+
+Diag6= np.load('twobasin_diags_bs_0.003746206896551724.npz')
+a_6 = Diag6['Psi_AMOC']
+p_6 = Diag6['Psi_PMOC']
+
+Diag7= np.load('twobasin_diags_bs_0.004423448275862069.npz')
+a_7 = Diag7['Psi_AMOC']
+p_7 = Diag7['Psi_PMOC']
+
+Diag8= np.load('twobasin_diags_bs_0.005100689655172414.npz')
+a_8 = Diag8['Psi_AMOC']
+p_8 = Diag8['Psi_PMOC']
+
+Diag9= np.load('twobasin_diags_bs_0.005777931034482759.npz')
+a_9 = Diag9['Psi_AMOC']
+p_9 = Diag9['Psi_PMOC']
+
+Diag10= np.load('twobasin_diags_bs_0.006455172413793103.npz')
+a_10 = Diag10['Psi_AMOC']
+p_10 = Diag10['Psi_PMOC']
+
+Diag11= np.load('twobasin_diags_bs_0.007132413793103448.npz')
+a_11 = Diag11['Psi_AMOC']
+p_11 = Diag11['Psi_PMOC']
+
+Diag12= np.load('twobasin_diags_bs_0.007809655172413793.npz')
+a_12 = Diag12['Psi_AMOC']
+p_12 = Diag12['Psi_PMOC']
+
+Diag13= np.load('twobasin_diags_bs_0.008486896551724138.npz')
+a_13 = Diag13['Psi_AMOC']
+p_13 = Diag13['Psi_PMOC']
+
+Diag14= np.load('twobasin_diags_bs_0.009164137931034481.npz')
+a_14 = Diag14['Psi_AMOC']
+p_14 = Diag14['Psi_PMOC']
+
+Diag15= np.load('twobasin_diags_bs_0.009841379310344827.npz')
+a_15 = Diag15['Psi_AMOC']
+p_15 = Diag15['Psi_PMOC']
+
+Diag16= np.load('twobasin_diags_bs_0.010518620689655171.npz')
+a_16 = Diag16['Psi_AMOC']
+p_16 = Diag16['Psi_PMOC']
+
+Diag17= np.load('twobasin_diags_bs_0.011195862068965516.npz')
+a_17 = Diag17['Psi_AMOC']
+p_17 = Diag17['Psi_PMOC']
+
+Diag18= np.load('twobasin_diags_bs_0.011873103448275862.npz')
+a_18 = Diag18['Psi_AMOC']
+p_18 = Diag18['Psi_PMOC']
+
+Diag19= np.load('twobasin_diags_bs_0.012550344827586206.npz')
+a_19 = Diag19['Psi_AMOC']
+p_19 = Diag19['Psi_PMOC']
+
+
+Diag20= np.load('twobasin_diags_bs_0.013227586206896551.npz')
+a_20 = Diag20['Psi_AMOC']
+p_20 = Diag20['Psi_PMOC']
+
+Diag21= np.load('twobasin_diags_bs_0.013904827586206895.npz')
+a_21 = Diag21['Psi_AMOC']
+p_21 = Diag21['Psi_PMOC']
+
+Diag22= np.load('twobasin_diags_bs_0.014582068965517241.npz')
+a_22 = Diag22['Psi_AMOC']
+p_22 = Diag22['Psi_PMOC']
+
+Diag23= np.load('twobasin_diags_bs_0.015259310344827585.npz')
+a_23 = Diag23['Psi_AMOC']
+p_23 = Diag23['Psi_PMOC']
+
+Diag24= np.load('twobasin_diags_bs_0.01593655172413793.npz')
+a_24 = Diag24['Psi_AMOC']
+p_24 = Diag24['Psi_PMOC']
+
+Diag25= np.load('twobasin_diags_bs_0.016613793103448276.npz')
+a_25 = Diag25['Psi_AMOC']
+p_25 = Diag25['Psi_PMOC']
+
+Diag26= np.load('twobasin_diags_bs_0.01729103448275862.npz')
+a_26 = Diag26['Psi_AMOC']
+p_26 = Diag26['Psi_PMOC']
+
+Diag27= np.load('twobasin_diags_bs_0.017968275862068964.npz')
+a_27 = Diag27['Psi_AMOC']
+p_27 = Diag27['Psi_PMOC']
+
+Diag28= np.load('twobasin_diags_bs_0.01864551724137931.npz')
+a_28 = Diag28['Psi_AMOC']
+p_28 = Diag28['Psi_PMOC']
+
+Diag29= np.load('twobasin_diags_bs_0.019322758620689655.npz')
+a_29 = Diag29['Psi_AMOC']
+p_29 = Diag29['Psi_PMOC']
+
+Diag30= np.load('twobasin_diags_bs_0.02.npz')
+a_30 = Diag30['Psi_AMOC']
+p_30 = Diag30['Psi_PMOC']
+
+
+BP = np.concatenate((p_0,p_1,p_2,p_3,p_4,p_5,p_6,p_7,p_8,p_9,p_10,p_11,p_12,p_13,p_14,p_15,p_16,p_17,p_18,p_19,p_20,p_21,p_22,p_23,p_24,p_25,p_26,p_27,p_28,p_29))
+
+
+
+BA = np.concatenate((a_0,a_1,a_2,a_3,a_4,a_5,a_6,a_7,a_8,a_9,a_10,a_11,a_12,a_13,a_14,a_15,a_16,a_17,a_18,a_19,a_20,a_21,a_22,a_23,a_24,a_25,a_26,a_27,a_28,a_29))
+
+
+BG = np.concatenate((a_0+p_0,a_1+p_1,a_2+p_2,a_3+p_3,a_4+p_4,a_5+p_5,a_6+p_6,a_7+p_7,a_8+p_8,a_9+p_9,a_10+p_10,a_11+p_11,a_12+p_12,a_13+p_13,a_14+p_14,a_15+p_15,a_16+p_16,a_17+p_17,a_18+p_18,a_19+p_19,a_20+p_20,a_21+p_21,a_22+p_22,a_23+p_23,a_24+p_24,a_25+p_25,a_26+p_26,a_27+p_27,a_28+p_28,a_29+p_29))
+
+
+
+bs_NP = np.linspace(0.00036,0.02,30)
+#BA = np.array([a_0, a_1, a_2, a_3, a_4,a_5,a_6,a_7,a_8,a_9,a_10,a_11,a_12,a_13,a_14,a_15,a_16,a_17,a_18,a_19,a_20,a_21,a_22,a_23,a_24,a_25,a_26,a_27,a_28,a_29])
+#BP = np.array([p_0,p_1,p_2,p_3,p_4,p_5,p_6,p_7,p_8,p_9,p_10,p_11,p_12,p_13,p_14,p_15,p_16,p_17,p_18,p_19,p_20,p_21,p_22,p_23,p_24,p_25,p_26,p_27,p_28,p_29])
+
+XA = np.reshape(BA,(30,80))
+XP = np.reshape(BP,(30,80))
+XG = np.reshape(BG,(30,80))
+
+fig = plt.figure(figsize=(10.6,6.8))
+
+
+ax1 =fig.add_axes([0.1,.57,.33,.36])
+ax2 = ax1.twiny()
+plt.ylim((-4e3,0))
+ax1.set_ylabel('Depth [m]', fontsize=13)
+ax1.set_xlim((-20,30))
+ax2.set_xlim((-0.02,0.030))
+ax1.set_xlabel('$\Psi$ [SV]', fontsize=13)
+ax2.set_xlabel('$b_B$ [m s$^{-2}$]', fontsize=13)
+ax2.plot(bs_NP, XA,'--r', label = "AMOC", linewidth=1.5)
+ax2.plot(bs_NP, XP,'--b', label = "PMOC", linewidth=1.5)
+
+
+ax1 = fig.add_subplot(222)
+CS=ax1.contour(bs_NP,z,XG.transpose()/2e-3,levels=blevs/2e-3,colors='k',linewidths=1.0,linestyles='solid')
+ax1.clabel(CS,fontsize=10,fmt='%1.0f')
+ax1.contour(bs_NP,z,XG.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(bs_NP,z,XG.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,bs_NP[-1]])
+ax1.set_xlabel('bs_NP',fontsize=12)
+ax1.set_ylabel('Depth [m]',fontsize=12)
+ax1.set_title('Global',fontsize=12)
+plt.gca().invert_xaxis()
+
+ax1 = fig.add_subplot(223)
+CS=ax1.contour(bs_NP,z,XP.transpose()/2e-3,levels=blevs/2e-3,colors='k',linewidths=1.0,linestyles='solid')
+ax1.clabel(CS,fontsize=10,fmt='%1.0f')
+ax1.contour(bs_NP,z,XP.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(bs_NP,z,XP.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,bs_NP[-1]])
+ax1.set_xlabel('bs_NP',fontsize=12)
+ax1.set_title('Pacific',fontsize=12)
+plt.gca().invert_xaxis()
+
+ax1 = fig.add_subplot(224)
+CS=ax1.contour(bs_NP,z,XA.transpose()/2e-3,levels=blevs/2e-3,colors='k',linewidths=1.0,linestyles='solid')
+ax1.clabel(CS,fontsize=10,fmt='%1.0f')
+ax1.contour(bs_NP,z,XA.transpose(),levels=plevs,colors='k',linewidths=0.5)
+CS=ax1.contourf(bs_NP,z,XA.transpose(),levels=plevs,cmap=plt.cm.bwr, vmin=-20, vmax=20)
+ax1.set_xlim([0,bs_NP[-1]])
+ax1.set_xlabel('bs',fontsize=12)
+ax1.set_ylabel('Depth [m]',fontsize=12)
+ax1.set_title('Atlantic',fontsize=12)
+plt.gca().invert_xaxis()
+
+cbar_ax = fig.add_axes([0.94, 0.15, 0.015, 0.7])
+fig.tight_layout()   
+fig.subplots_adjust(right=0.92)
+fig.colorbar(CS, cax=cbar_ax,ticks=np.arange(-20,21,5), orientation='vertical')
