@@ -1,12 +1,7 @@
-from MITgcmutils import llc
 import numpy as np
 import matplotlib.pyplot as plt
-
 from MITgcmutils import mds
-from MITgcmutils import jmd95
-from MITgcmutils import mdjwf
-from MITgcmutils import cs
-from scipy import integrate
+
 
 DXG = mds.rdmds('DXG')
 XC = mds.rdmds('XC')
