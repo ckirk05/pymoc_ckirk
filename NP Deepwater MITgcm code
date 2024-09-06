@@ -55,3 +55,5 @@ for k in range(0,nz-1):
       
 psi_res=psiEM_cont+psiGM_cont;
 
+plt.contourf(y[32:140],z,psi_res.transpose()[:,32:140],levels=np.linspace(-1.75e7,1.75e7,50)) #colorbar range for wide basin
+plt.colorbar()
