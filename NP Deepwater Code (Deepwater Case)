@@ -59,7 +59,7 @@ V_tot_deep[-1,:,60:210]=V_tot_deep[-1,:,60:210]-Psiy_GM_deep[-1,:,60:210]/(zf[-2
 for kk in range(0,nz-2): 
     V_tot_deep[kk-1,:,60:210]=V_tot_deep[kk-1,:,60:210]+(Psiy_GM_deep[kk,:,60:210]-Psiy_GM_deep[kk-1,:,60:210])/(zf[kk-1,0,0,]-zf[kk,0,0]);
     
-for kk in range(nz-1,0,-1): #i think the range is off
+for kk in range(nz-1,0,-1): 
     Psi_EM_deep[:,60:210,kk-1] = Psi_EM_deep[:,60:210,kk] +V_EU_deep[kk-1,:,60:210]*(zf[kk,0,0]-zf[kk-1,0,0]);
     
 for k in range(0,nz-1):
