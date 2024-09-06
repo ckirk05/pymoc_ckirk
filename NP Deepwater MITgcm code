@@ -1,0 +1,57 @@
+from MITgcmutils import llc
+import numpy as np
+import matplotlib.pyplot as plt
+
+from MITgcmutils import mds
+from MITgcmutils import jmd95
+from MITgcmutils import mdjwf
+from MITgcmutils import cs
+from scipy import integrate
+
+DXG = mds.rdmds('DXG')
+XC = mds.rdmds('XC')
+YC = mds.rdmds('YC')
+XG = mds.rdmds('XG')
+YG = mds.rdmds('YG')
+zf = mds.rdmds('RF')
+zc = mds.rdmds('RC')
+Diag_Final_cont = mds.rdmds('contDiag4.0020805000')
+V_EU_cont = Diag_Final_cont[1,:,:,:]
+Psiy_GM_cont = Diag_Final_cont[7,:,:,:]
+THETA_CONT = Diag_Final_cont[3,:,:,:]
+
+
+x = XC[0,:];
+y = YG[:,0];
+z = zf[0:29,0,0];
+
+Y,X,Z= np.meshgrid(YG[:,0],XG[0,:],zc[:,0,0]);
+[nx,ny,nz]=X.shape;
+
+Psi_EM_cont= np.zeros([ny,nx,nz]);
+
+psiGM_cont = np.zeros([ny,nz]);
+
+psiEM_cont = np.zeros([ny,nz]);
+
+thetay_cont = np.zeros([ny,nz]);
+
+
+V_tot_cont=V_EU_cont;
+V_tot_cont[-1,:,0:60]=V_tot_cont[-1,:,0:60]-Psiy_GM_cont[-1,:,0:60]/(zf[-2,0,0]-zf[-1,0,0]);
+
+
+for kk in range(0,nz-2): 
+    V_tot_cont[kk-1,:,0:60]=V_tot_cont[kk-1,:,0:60]+(Psiy_GM_cont[kk,:,0:60]-Psiy_GM_cont[kk-1,:,0:60])/(zf[kk-1,0,0,]-zf[kk,0,0]);
+    
+for kk in range(nz-1,0,-1): #i think the range is off
+    Psi_EM_cont[:,0:60,kk-1] = Psi_EM_cont[:,0:60,kk] +V_EU_cont[kk-1,:,0:60]*(zf[kk,0,0]-zf[kk-1,0,0]);
+    
+for k in range(0,nz-1):
+    for j in range(0,ny-1):
+        thetay_cont[j,k] = np.nanmean(np.squeeze(THETA_CONT[k,j,0:60]));
+        psiGM_cont[j,k]=np.sum(Psiy_GM_cont[k,j,0:60]*DXG[j,0:60]); 
+        psiEM_cont[j,k]=np.sum(Psi_EM_cont[j,0:60,k]*DXG[j,0:60]);
+      
+psi_res=psiEM_cont+psiGM_cont;
+
